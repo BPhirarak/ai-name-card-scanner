@@ -73,7 +73,29 @@ const EditCardForm: React.FC<EditCardFormProps> = ({ initialData, onCancel }) =>
     };
 
     const handleDownloadVcf = () => {
-        const displayName = cardData.name_en || cardData.name_th;
+        // Use English name if available, otherwise Thai name
+        const fullName = cardData.name_en || cardData.name_th || 'Unknown';
+        
+        // Split name into parts (First, Last)
+        // For Thai names, we'll use the full name as is
+        // For English names, try to split by space
+        let firstName = '';
+        let lastName = '';
+        
+        if (cardData.name_en) {
+            const nameParts = cardData.name_en.trim().split(/\s+/);
+            if (nameParts.length > 1) {
+                firstName = nameParts[0];
+                lastName = nameParts.slice(1).join(' ');
+            } else {
+                firstName = cardData.name_en;
+            }
+        } else if (cardData.name_th) {
+            // For Thai names, use full name as first name
+            firstName = cardData.name_th;
+        }
+        
+        // Build phone numbers
         let phoneVcf = '';
         if (cardData.phone_mobile) {
             phoneVcf += `TEL;TYPE=CELL:${cardData.phone_mobile}\n`;
@@ -82,22 +104,26 @@ const EditCardForm: React.FC<EditCardFormProps> = ({ initialData, onCancel }) =>
             phoneVcf += `TEL;TYPE=WORK,VOICE:${cardData.phone_office}\n`;
         }
 
+        // VCF format with proper N (Name) field
+        // N format: LastName;FirstName;MiddleName;Prefix;Suffix
         const vcfContent = `BEGIN:VCARD
 VERSION:3.0
-FN:${displayName}
-ORG:${cardData.company}
-TITLE:${cardData.title}
-${phoneVcf}EMAIL:${cardData.email}
-URL:${cardData.website}
-ADR;TYPE=WORK:;;${cardData.address.replace(/\n/g, ';')}
-CATEGORIES:${cardData.category}
+N:${lastName};${firstName};;;
+FN:${fullName}
+ORG:${cardData.company || ''}
+TITLE:${cardData.title || ''}
+${phoneVcf}EMAIL:${cardData.email || ''}
+URL:${cardData.website || ''}
+ADR;TYPE=WORK:;;${(cardData.address || '').replace(/\n/g, ';')}
+CATEGORIES:${cardData.category || ''}
+NOTE:${cardData.name_th ? `Thai Name: ${cardData.name_th}` : ''}
 END:VCARD`;
 
-        const blob = new Blob([vcfContent], { type: 'text/vcard' });
+        const blob = new Blob([vcfContent], { type: 'text/vcard;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${displayName.replace(/\s/g, '_')}.vcf`;
+        a.download = `${fullName.replace(/\s/g, '_')}.vcf`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
