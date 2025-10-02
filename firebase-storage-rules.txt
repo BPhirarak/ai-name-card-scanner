@@ -1,0 +1,17 @@
+// Firebase Storage Rules
+// ไปที่ Firebase Console > Storage > Rules และใส่ rules นี้
+
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Allow read/write access to business-cards folder
+    match /business-cards/{allPaths=**} {
+      allow read, write: if true;
+    }
+    
+    // Allow read access to all files (for public access)
+    match /{allPaths=**} {
+      allow read: if true;
+    }
+  }
+}

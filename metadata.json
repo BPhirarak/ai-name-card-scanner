@@ -1,0 +1,7 @@
+{
+  "name": "AI Name Card Scanner",
+  "description": "An application to scan business cards using your camera or by uploading an image. It uses AI to extract contact information, which can then be saved to a cloud database.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
