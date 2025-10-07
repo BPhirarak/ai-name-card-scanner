@@ -38,6 +38,53 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         img.src = `data:${imageMimeType};base64,${imageData}`;
     }, [imageData, imageMimeType]);
 
+    // Apply brightness and contrast manually for better mobile compatibility
+    const applyImageFilters = (ctx: CanvasRenderingContext2D, img: HTMLImageElement) => {
+        // Try CSS filter first (modern browsers)
+        try {
+            ctx.filter = `brightness(${brightness}%) contrast(${contrast}%)`;
+            ctx.drawImage(img, 0, 0);
+            
+            // Test if filter worked by checking if it's still set
+            if (ctx.filter !== 'none' && ctx.filter.includes('brightness')) {
+                return; // Filter worked, we're done
+            }
+        } catch (e) {
+            // Filter not supported, fall back to manual method
+        }
+        
+        // Manual brightness/contrast adjustment for older browsers
+        ctx.filter = 'none'; // Reset filter
+        ctx.drawImage(img, 0, 0);
+        
+        if (brightness !== 100 || contrast !== 100) {
+            const imageData = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height);
+            const data = imageData.data;
+            
+            const brightnessFactor = brightness / 100;
+            const contrastFactor = contrast / 100;
+            
+            for (let i = 0; i < data.length; i += 4) {
+                // Apply brightness
+                data[i] *= brightnessFactor;     // Red
+                data[i + 1] *= brightnessFactor; // Green
+                data[i + 2] *= brightnessFactor; // Blue
+                
+                // Apply contrast
+                data[i] = ((data[i] - 128) * contrastFactor) + 128;
+                data[i + 1] = ((data[i + 1] - 128) * contrastFactor) + 128;
+                data[i + 2] = ((data[i + 2] - 128) * contrastFactor) + 128;
+                
+                // Clamp values
+                data[i] = Math.max(0, Math.min(255, data[i]));
+                data[i + 1] = Math.max(0, Math.min(255, data[i + 1]));
+                data[i + 2] = Math.max(0, Math.min(255, data[i + 2]));
+            }
+            
+            ctx.putImageData(imageData, 0, 0);
+        }
+    };
+
     // Redraw canvas when parameters change
     const redrawCanvas = useCallback(() => {
         if (!originalImage || !canvasRef.current) return;
@@ -56,9 +103,6 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         // Apply transformations
         ctx.save();
 
-        // Apply brightness and contrast
-        ctx.filter = `brightness(${brightness}%) contrast(${contrast}%)`;
-
         // Apply rotation
         if (rotation !== 0) {
             ctx.translate(canvas.width / 2, canvas.height / 2);
@@ -66,12 +110,12 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
             ctx.translate(-canvas.width / 2, -canvas.height / 2);
         }
 
-        // Draw image
+        // Draw image with filters
         if (activeMode === 'keystone' && keystonePoints.length === 4) {
             // Apply keystone correction using perspective transformation
             drawKeystoneImage(ctx, originalImage, keystonePoints);
         } else {
-            ctx.drawImage(originalImage, 0, 0);
+            applyImageFilters(ctx, originalImage);
         }
 
         ctx.restore();
@@ -174,19 +218,36 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
 
     const drawKeystonePoints = (ctx: CanvasRenderingContext2D, points: Point[]) => {
         points.forEach((point, index) => {
-            ctx.fillStyle = selectedCorner === index ? '#ff0000' : '#00ff00';
+            // Larger circles for mobile
+            const radius = 20;
+            const isSelected = selectedCorner === index;
+            
+            // Draw outer circle (touch area indicator)
+            ctx.fillStyle = isSelected ? 'rgba(255, 0, 0, 0.3)' : 'rgba(0, 255, 0, 0.3)';
             ctx.beginPath();
-            ctx.arc(point.x, point.y, 8, 0, 2 * Math.PI);
+            ctx.arc(point.x, point.y, radius, 0, 2 * Math.PI);
             ctx.fill();
+            
+            // Draw inner circle (visual point)
+            ctx.fillStyle = isSelected ? '#ff0000' : '#00ff00';
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, 12, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            // Draw white border
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
             
             // Draw point label
             ctx.fillStyle = '#ffffff';
-            ctx.font = '12px Arial';
-            ctx.fillText(`${index + 1}`, point.x - 4, point.y + 4);
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(`${index + 1}`, point.x, point.y + 5);
         });
     };
 
-    const getCanvasCoordinates = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const getCanvasCoordinates = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
         if (!canvasRef.current) return { x: 0, y: 0 };
 
         const canvas = canvasRef.current;
@@ -196,15 +257,31 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         const scaleX = canvas.width / rect.width;
         const scaleY = canvas.height / rect.height;
         
-        // Get mouse position relative to canvas and scale to actual canvas coordinates
-        const x = (e.clientX - rect.left) * scaleX;
-        const y = (e.clientY - rect.top) * scaleY;
+        // Get position from mouse or touch event
+        let clientX: number, clientY: number;
+        
+        if ('touches' in e) {
+            // Touch event
+            const touch = e.touches[0] || e.changedTouches[0];
+            clientX = touch.clientX;
+            clientY = touch.clientY;
+        } else {
+            // Mouse event
+            clientX = e.clientX;
+            clientY = e.clientY;
+        }
+        
+        // Get position relative to canvas and scale to actual canvas coordinates
+        const x = (clientX - rect.left) * scaleX;
+        const y = (clientY - rect.top) * scaleY;
         
         return { x, y };
     };
 
-    const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const handleStart = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
         if (!canvasRef.current) return;
+        
+        e.preventDefault(); // Prevent scrolling on touch
 
         const { x, y } = getCanvasCoordinates(e);
 
@@ -213,10 +290,11 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
             setDragStart({ x, y });
             setCropArea({ x, y, width: 0, height: 0 });
         } else if (activeMode === 'keystone') {
-            // Check if clicking on a keystone point
+            // Check if clicking on a keystone point - larger hit area for mobile
+            const hitRadius = 40; // Much larger for touch
             const clickedPoint = keystonePoints.findIndex(point => {
                 const distance = Math.sqrt((point.x - x) ** 2 + (point.y - y) ** 2);
-                return distance < 20; // Increased hit area
+                return distance < hitRadius;
             });
             
             if (clickedPoint !== -1) {
@@ -226,8 +304,10 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         }
     };
 
-    const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const handleMove = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
         if (!isDragging || !canvasRef.current) return;
+        
+        e.preventDefault(); // Prevent scrolling on touch
 
         const { x, y } = getCanvasCoordinates(e);
 
@@ -247,7 +327,7 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         }
     };
 
-    const handleCanvasMouseUp = () => {
+    const handleEnd = () => {
         setIsDragging(false);
         setSelectedCorner(-1);
     };
@@ -448,7 +528,7 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
                     <div className="md:col-span-3">
                         <div className="flex flex-col gap-2">
                             <p className="text-sm text-gray-600 dark:text-gray-400">
-                                🖱️ คลิกและลากเพื่อเลือกพื้นที่ที่ต้องการตัด
+                                📱 สัมผัสและลากเพื่อเลือกพื้นที่ที่ต้องการตัด (Mobile) / 🖱️ คลิกและลากเพื่อเลือกพื้นที่ (Desktop)
                             </p>
                             {cropArea && cropArea.width > 0 && cropArea.height > 0 && (
                                 <div className="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 p-2 rounded">
@@ -471,7 +551,7 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
                     <div className="md:col-span-3">
                         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
                             <p className="text-sm text-gray-600 dark:text-gray-400">
-                                🎯 คลิกและลากจุดสีเขียวเพื่อปรับมุมของนามบัตร (แก้ keystone distortion)
+                                🎯 สัมผัสและลากจุดสีเขียวขนาดใหญ่เพื่อปรับมุมของนามบัตร (Mobile) / 🖱️ คลิกและลากจุดสีเขียวเพื่อปรับมุม (Desktop)
                             </p>
                             <div className="flex gap-2">
                                 <button
@@ -511,15 +591,22 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
             <div className="mb-4 flex justify-center bg-gray-100 dark:bg-gray-700 rounded-lg p-4 overflow-auto">
                 <canvas
                     ref={canvasRef}
-                    onMouseDown={handleCanvasMouseDown}
-                    onMouseMove={handleCanvasMouseMove}
-                    onMouseUp={handleCanvasMouseUp}
-                    onMouseLeave={handleCanvasMouseUp}
-                    className="max-w-full max-h-96 border border-gray-300 dark:border-gray-600 cursor-crosshair shadow-lg"
+                    // Mouse events
+                    onMouseDown={handleStart}
+                    onMouseMove={handleMove}
+                    onMouseUp={handleEnd}
+                    onMouseLeave={handleEnd}
+                    // Touch events
+                    onTouchStart={handleStart}
+                    onTouchMove={handleMove}
+                    onTouchEnd={handleEnd}
+                    onTouchCancel={handleEnd}
+                    className="max-w-full max-h-96 border border-gray-300 dark:border-gray-600 cursor-crosshair shadow-lg touch-none"
                     style={{ 
                         imageRendering: 'auto',
                         maxWidth: '100%',
-                        height: 'auto'
+                        height: 'auto',
+                        touchAction: 'none' // Prevent default touch behaviors
                     }}
                 />
             </div>
