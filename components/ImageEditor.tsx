@@ -120,21 +120,33 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
     };
 
     const drawCropOverlay = (ctx: CanvasRenderingContext2D, area: { x: number; y: number; width: number; height: number }) => {
-        // Draw dark overlay
+        // Save current state
+        ctx.save();
+        
+        // Draw dark overlay on entire canvas
         ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
         ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
         
-        // Clear crop area
-        ctx.clearRect(area.x, area.y, area.width, area.height);
+        // Use composite operation to "cut out" the crop area
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.fillRect(area.x, area.y, area.width, area.height);
+        
+        // Reset composite operation
+        ctx.globalCompositeOperation = 'source-over';
         
         // Draw crop border
         ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
         ctx.strokeRect(area.x, area.y, area.width, area.height);
+        ctx.setLineDash([]);
         
         // Draw corner handles
-        const handleSize = 10;
+        const handleSize = 12;
         ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 1;
+        
         const corners = [
             { x: area.x, y: area.y },
             { x: area.x + area.width, y: area.y },
@@ -144,7 +156,20 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         
         corners.forEach(corner => {
             ctx.fillRect(corner.x - handleSize/2, corner.y - handleSize/2, handleSize, handleSize);
+            ctx.strokeRect(corner.x - handleSize/2, corner.y - handleSize/2, handleSize, handleSize);
         });
+        
+        // Draw crop dimensions
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '14px Arial';
+        ctx.fillText(
+            `${Math.round(area.width)} × ${Math.round(area.height)}`,
+            area.x + 5,
+            area.y - 5
+        );
+        
+        // Restore state
+        ctx.restore();
     };
 
     const drawKeystonePoints = (ctx: CanvasRenderingContext2D, points: Point[]) => {
@@ -161,12 +186,27 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         });
     };
 
+    const getCanvasCoordinates = (e: React.MouseEvent<HTMLCanvasElement>) => {
+        if (!canvasRef.current) return { x: 0, y: 0 };
+
+        const canvas = canvasRef.current;
+        const rect = canvas.getBoundingClientRect();
+        
+        // Calculate scale factors
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        
+        // Get mouse position relative to canvas and scale to actual canvas coordinates
+        const x = (e.clientX - rect.left) * scaleX;
+        const y = (e.clientY - rect.top) * scaleY;
+        
+        return { x, y };
+    };
+
     const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
         if (!canvasRef.current) return;
 
-        const rect = canvasRef.current.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const { x, y } = getCanvasCoordinates(e);
 
         if (activeMode === 'crop') {
             setIsDragging(true);
@@ -176,7 +216,7 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
             // Check if clicking on a keystone point
             const clickedPoint = keystonePoints.findIndex(point => {
                 const distance = Math.sqrt((point.x - x) ** 2 + (point.y - y) ** 2);
-                return distance < 15;
+                return distance < 20; // Increased hit area
             });
             
             if (clickedPoint !== -1) {
@@ -189,9 +229,7 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
     const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
         if (!isDragging || !canvasRef.current) return;
 
-        const rect = canvasRef.current.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const { x, y } = getCanvasCoordinates(e);
 
         if (activeMode === 'crop' && cropArea) {
             const width = x - dragStart.x;
@@ -215,37 +253,64 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
     };
 
     const handleSave = () => {
-        if (!canvasRef.current || !originalImage) return;
+        if (!originalImage) return;
 
-        let finalCanvas = canvasRef.current;
+        // Create a new canvas for final processing
+        const finalCanvas = document.createElement('canvas');
+        const finalCtx = finalCanvas.getContext('2d');
+        if (!finalCtx) return;
 
-        // Apply keystone correction if in keystone mode
+        let sourceCanvas = document.createElement('canvas');
+        let sourceCtx = sourceCanvas.getContext('2d');
+        if (!sourceCtx) return;
+
+        // Set up source canvas with original image
+        sourceCanvas.width = originalImage.width;
+        sourceCanvas.height = originalImage.height;
+
+        // Apply all transformations to source canvas
+        sourceCtx.save();
+
+        // Apply brightness and contrast
+        sourceCtx.filter = `brightness(${brightness}%) contrast(${contrast}%)`;
+
+        // Apply rotation
+        if (rotation !== 0) {
+            sourceCtx.translate(sourceCanvas.width / 2, sourceCanvas.height / 2);
+            sourceCtx.rotate((rotation * Math.PI) / 180);
+            sourceCtx.translate(-sourceCanvas.width / 2, -sourceCanvas.height / 2);
+        }
+
+        sourceCtx.drawImage(originalImage, 0, 0);
+        sourceCtx.restore();
+
+        // Apply keystone correction if needed
         if (activeMode === 'keystone' && keystonePoints.length === 4) {
             try {
-                finalCanvas = correctKeystone(
-                    canvasRef.current, 
+                sourceCanvas = correctKeystone(
+                    sourceCanvas, 
                     originalImage, 
                     keystonePoints as [Point, Point, Point, Point]
                 );
             } catch (error) {
-                console.warn('Keystone correction failed, using original image:', error);
+                console.warn('Keystone correction failed, using transformed image:', error);
             }
         }
 
-        // If cropping, create a new canvas with cropped area
+        // Apply cropping if needed
         if (activeMode === 'crop' && cropArea && cropArea.width > 0 && cropArea.height > 0) {
-            const cropCanvas = document.createElement('canvas');
-            const cropCtx = cropCanvas.getContext('2d');
-            if (!cropCtx) return;
-
-            cropCanvas.width = cropArea.width;
-            cropCanvas.height = cropArea.height;
-            cropCtx.drawImage(
-                finalCanvas,
+            finalCanvas.width = cropArea.width;
+            finalCanvas.height = cropArea.height;
+            finalCtx.drawImage(
+                sourceCanvas,
                 cropArea.x, cropArea.y, cropArea.width, cropArea.height,
                 0, 0, cropArea.width, cropArea.height
             );
-            finalCanvas = cropCanvas;
+        } else {
+            // Use the full transformed image
+            finalCanvas.width = sourceCanvas.width;
+            finalCanvas.height = sourceCanvas.height;
+            finalCtx.drawImage(sourceCanvas, 0, 0);
         }
 
         // Convert to base64
@@ -381,9 +446,24 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
                 
                 {activeMode === 'crop' && (
                     <div className="md:col-span-3">
-                        <p className="text-sm text-gray-600 dark:text-gray-400">
-                            🖱️ คลิกและลากเพื่อเลือกพื้นที่ที่ต้องการตัด
-                        </p>
+                        <div className="flex flex-col gap-2">
+                            <p className="text-sm text-gray-600 dark:text-gray-400">
+                                🖱️ คลิกและลากเพื่อเลือกพื้นที่ที่ต้องการตัด
+                            </p>
+                            {cropArea && cropArea.width > 0 && cropArea.height > 0 && (
+                                <div className="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 p-2 rounded">
+                                    📏 พื้นที่ที่เลือก: {Math.round(cropArea.width)} × {Math.round(cropArea.height)} pixels
+                                    <br />
+                                    📍 ตำแหน่ง: ({Math.round(cropArea.x)}, {Math.round(cropArea.y)})
+                                </div>
+                            )}
+                            <button
+                                onClick={() => setCropArea(null)}
+                                className="self-start px-3 py-1 bg-red-500 text-white text-sm rounded hover:bg-red-600 transition-colors"
+                            >
+                                🗑️ ล้างการเลือก
+                            </button>
+                        </div>
                     </div>
                 )}
                 
@@ -434,8 +514,13 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
                     onMouseDown={handleCanvasMouseDown}
                     onMouseMove={handleCanvasMouseMove}
                     onMouseUp={handleCanvasMouseUp}
-                    className="max-w-full max-h-96 border border-gray-300 dark:border-gray-600 cursor-crosshair"
-                    style={{ imageRendering: 'pixelated' }}
+                    onMouseLeave={handleCanvasMouseUp}
+                    className="max-w-full max-h-96 border border-gray-300 dark:border-gray-600 cursor-crosshair shadow-lg"
+                    style={{ 
+                        imageRendering: 'auto',
+                        maxWidth: '100%',
+                        height: 'auto'
+                    }}
                 />
             </div>
 
