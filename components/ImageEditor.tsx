@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { correctKeystone, type Point } from '../utils/perspectiveTransform';
+import { detectBusinessCard } from '../utils/cardDetection';
 
 interface ImageEditorProps {
     imageData: string;
@@ -23,40 +24,69 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
     const [cropDragMode, setCropDragMode] = useState<'none' | 'move' | 'resize'>('none');
     const [resizeHandle, setResizeHandle] = useState<number>(-1);
 
-    // Auto-detect business card area (simplified algorithm)
-    const autoDetectCardArea = useCallback((img: HTMLImageElement) => {
+    // Auto-detect business card area using the same algorithm as auto-process
+    const autoDetectCardArea = useCallback(async (img: HTMLImageElement) => {
+        try {
+            // Create canvas for detection
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            if (!ctx) throw new Error('Canvas not supported');
+            
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0);
+            
+            // Use the same detection algorithm
+            const detectedCard = await detectBusinessCard(canvas);
+            
+            if (detectedCard && detectedCard.confidence > 0.3) {
+                console.log('🎯 Card detected in ImageEditor with confidence:', detectedCard.confidence);
+                return {
+                    cropArea: detectedCard.cropArea,
+                    corners: detectedCard.corners
+                };
+            }
+        } catch (error) {
+            console.warn('Detection failed, using fallback:', error);
+        }
+        
+        // Fallback to simple center-based detection
         const margin = Math.min(img.width, img.height) * 0.1;
         const cardWidth = img.width * 0.8;
         const cardHeight = img.height * 0.6;
         const x = (img.width - cardWidth) / 2;
         const y = (img.height - cardHeight) / 2;
         
-        return {
+        const cropArea = {
             x: Math.max(margin, x),
             y: Math.max(margin, y),
             width: Math.min(cardWidth, img.width - 2 * margin),
             height: Math.min(cardHeight, img.height - 2 * margin)
         };
+        
+        const corners: [Point, Point, Point, Point] = [
+            { x: cropArea.x, y: cropArea.y },
+            { x: cropArea.x + cropArea.width, y: cropArea.y },
+            { x: cropArea.x + cropArea.width, y: cropArea.y + cropArea.height },
+            { x: cropArea.x, y: cropArea.y + cropArea.height }
+        ];
+        
+        return { cropArea, corners };
     }, []);
 
     // Load original image
     useEffect(() => {
         const img = new Image();
-        img.onload = () => {
+        img.onload = async () => {
             setOriginalImage(img);
             
             // Initialize keystone points with auto-detected card corners
-            const cardArea = autoDetectCardArea(img);
-            const points = [
-                { x: cardArea.x, y: cardArea.y }, // top-left
-                { x: cardArea.x + cardArea.width, y: cardArea.y }, // top-right
-                { x: cardArea.x + cardArea.width, y: cardArea.y + cardArea.height }, // bottom-right
-                { x: cardArea.x, y: cardArea.y + cardArea.height } // bottom-left
-            ];
-            setKeystonePoints(points);
+            const detection = await autoDetectCardArea(img);
             
-            // Initialize crop area
-            setCropArea(cardArea);
+            setKeystonePoints(detection.corners);
+            setCropArea(detection.cropArea);
+            
+            console.log('🎨 ImageEditor initialized with detection:', detection);
         };
         img.src = `data:${imageMimeType};base64,${imageData}`;
     }, [imageData, imageMimeType, autoDetectCardArea]);
@@ -602,19 +632,16 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         onSave(base64Data);
     };
 
-    const resetImage = () => {
+    const resetImage = async () => {
         setRotation(0);
         setBrightness(100);
         setContrast(100);
-        setCropArea(null);
+        
         if (originalImage) {
-            const points = [
-                { x: 0, y: 0 },
-                { x: originalImage.width, y: 0 },
-                { x: originalImage.width, y: originalImage.height },
-                { x: 0, y: originalImage.height }
-            ];
-            setKeystonePoints(points);
+            // Reset to auto-detected values
+            const detection = await autoDetectCardArea(originalImage);
+            setKeystonePoints(detection.corners);
+            setCropArea(detection.cropArea);
         }
     };
 
@@ -743,9 +770,10 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
                             )}
                             <div className="flex gap-2">
                                 <button
-                                    onClick={() => {
+                                    onClick={async () => {
                                         if (originalImage) {
-                                            setCropArea(autoDetectCardArea(originalImage));
+                                            const detection = await autoDetectCardArea(originalImage);
+                                            setCropArea(detection.cropArea);
                                         }
                                     }}
                                     className="px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 transition-colors"
@@ -778,16 +806,11 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
                             </div>
                             <div className="flex gap-2">
                                 <button
-                                    onClick={() => {
+                                    onClick={async () => {
                                         if (originalImage) {
-                                            // Auto-detect business card corners (simplified)
-                                            const margin = Math.min(originalImage.width, originalImage.height) * 0.1;
-                                            setKeystonePoints([
-                                                { x: margin, y: margin },
-                                                { x: originalImage.width - margin, y: margin },
-                                                { x: originalImage.width - margin, y: originalImage.height - margin },
-                                                { x: margin, y: originalImage.height - margin }
-                                            ]);
+                                            const detection = await autoDetectCardArea(originalImage);
+                                            setKeystonePoints(detection.corners);
+                                            setCropArea(detection.cropArea);
                                         }
                                     }}
                                     className="px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 transition-colors"
