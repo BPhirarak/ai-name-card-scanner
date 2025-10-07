@@ -31,6 +31,7 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
     const [isCameraOn, setIsCameraOn] = useState(false);
     const [showImageEditor, setShowImageEditor] = useState(false);
     const [isAutoProcessing, setIsAutoProcessing] = useState(false);
+    const [autoProcessed, setAutoProcessed] = useState(false);
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -53,6 +54,7 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
         setError(null);
         setShowImageEditor(false);
         setIsAutoProcessing(false);
+        setAutoProcessed(false);
         if(fileInputRef.current) {
             fileInputRef.current.value = "";
         }
@@ -170,8 +172,8 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
                     url: dataUrl
                 });
                 
-                // Automatically proceed to AI extraction
-                await handleProcessWithData(base64Data);
+                // Mark as auto-processed so user can see the result
+                setAutoProcessed(true);
             } else {
                 throw new Error('ไม่สามารถตรวจจับนามบัตรได้ กรุณาลองแก้ไขด้วยตนเอง');
             }
@@ -279,23 +281,41 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
 
                 {image && !isCameraOn && (
                     <>
-                        <button 
-                            onClick={handleAutoProcess} 
-                            disabled={isAutoProcessing || isLoading} 
-                            className="w-full sm:w-auto bg-purple-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-purple-700 transition-all shadow-lg disabled:bg-slate-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                        >
-                            {isAutoProcessing ? (
-                                <><Spinner /> กำลังตรวจจับและปรับแต่ง...</>
-                            ) : (
-                                '🤖 ตรวจจับและปรับแต่งอัตโนมัติ'
-                            )}
-                        </button>
-                        <button onClick={handleEditImage} className="w-full sm:w-auto bg-blue-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-blue-700 transition-all shadow-lg flex items-center justify-center gap-2">
-                            🎨 แก้ไขด้วยตนเอง
-                        </button>
-                        <button onClick={handleProcess} disabled={isLoading} className="w-full sm:w-auto bg-green-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-green-700 transition-all shadow-lg disabled:bg-slate-400 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                            {isLoading ? <><Spinner /> กำลังประมวลผล...</> : 'ประมวลผลตามต้นฉบับ'}
-                        </button>
+                        {!autoProcessed ? (
+                            <>
+                                <button 
+                                    onClick={handleAutoProcess} 
+                                    disabled={isAutoProcessing || isLoading} 
+                                    className="w-full sm:w-auto bg-purple-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-purple-700 transition-all shadow-lg disabled:bg-slate-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                >
+                                    {isAutoProcessing ? (
+                                        <><Spinner /> กำลังตรวจจับและปรับแต่ง...</>
+                                    ) : (
+                                        '🤖 ตรวจจับและปรับแต่งอัตโนมัติ'
+                                    )}
+                                </button>
+                                <button onClick={handleEditImage} className="w-full sm:w-auto bg-blue-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-blue-700 transition-all shadow-lg flex items-center justify-center gap-2">
+                                    🎨 แก้ไขด้วยตนเอง
+                                </button>
+                                <button onClick={handleProcess} disabled={isLoading} className="w-full sm:w-auto bg-green-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-green-700 transition-all shadow-lg disabled:bg-slate-400 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                                    {isLoading ? <><Spinner /> กำลังประมวลผล...</> : 'ประมวลผลตามต้นฉบับ'}
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <div className="w-full p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800 mb-4">
+                                    <p className="text-green-800 dark:text-green-200 text-center font-medium">
+                                        ✅ ตรวจจับและปรับแต่งเสร็จแล้ว! ตรวจสอบรูปภาพด้านบนแล้วกดประมวลผลเพื่อดึงข้อมูล
+                                    </p>
+                                </div>
+                                <button onClick={handleProcess} disabled={isLoading} className="w-full sm:w-auto bg-green-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-green-700 transition-all shadow-lg disabled:bg-slate-400 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                                    {isLoading ? <><Spinner /> กำลังประมวลผล...</> : '🧠 ประมวลผลด้วย AI'}
+                                </button>
+                                <button onClick={handleEditImage} className="w-full sm:w-auto bg-blue-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-blue-700 transition-all shadow-lg flex items-center justify-center gap-2">
+                                    🎨 แก้ไขเพิ่มเติม
+                                </button>
+                            </>
+                        )}
                         <button onClick={resetState} className="w-full sm:w-auto bg-slate-500 text-white font-bold py-3 px-6 rounded-lg hover:bg-slate-600 transition-all">รีเซ็ต</button>
                     </>
                 )}
@@ -316,7 +336,8 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
                 <div className="mt-3 p-3 bg-purple-50 dark:bg-purple-900/20 rounded border border-purple-200 dark:border-purple-800">
                     <h5 className="font-semibold text-purple-800 dark:text-purple-200 mb-1">🚀 ฟีเจอร์ใหม่: Auto Detection</h5>
                     <p className="text-xs text-purple-700 dark:text-purple-300">
-                        ระบบจะตรวจจับนามบัตรอัตโนมัติ ตัดขอบ ปรับมุม และเพิ่มความคมชัดให้เหมาะสมสำหรับการอ่านข้อมูล
+                        <strong>ขั้นตอน 1:</strong> ระบบตรวจจับนามบัตร ตัดขอบ และปรับแต่งอัตโนมัติ<br/>
+                        <strong>ขั้นตอน 2:</strong> ตรวจสอบผลลัพธ์แล้วกด "ประมวลผลด้วย AI" เพื่อดึงข้อมูล
                     </p>
                 </div>
             </div>
