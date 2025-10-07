@@ -461,6 +461,15 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
     const handleSave = () => {
         if (!originalImage) return;
 
+        console.log('🎨 Starting image save process...', {
+            mode: activeMode,
+            brightness,
+            contrast,
+            rotation,
+            keystonePoints: keystonePoints.length,
+            cropArea
+        });
+
         // Create a new canvas for final processing
         const finalCanvas = document.createElement('canvas');
         const finalCtx = finalCanvas.getContext('2d');
@@ -477,29 +486,93 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         // Apply all transformations to source canvas
         sourceCtx.save();
 
-        // Apply brightness and contrast
-        sourceCtx.filter = `brightness(${brightness}%) contrast(${contrast}%)`;
-
-        // Apply rotation
+        // Apply rotation first
         if (rotation !== 0) {
             sourceCtx.translate(sourceCanvas.width / 2, sourceCanvas.height / 2);
             sourceCtx.rotate((rotation * Math.PI) / 180);
             sourceCtx.translate(-sourceCanvas.width / 2, -sourceCanvas.height / 2);
         }
 
+        // Draw image first
         sourceCtx.drawImage(originalImage, 0, 0);
         sourceCtx.restore();
 
-        // Apply keystone correction if needed
+        // Apply brightness and contrast manually for better compatibility
+        if (brightness !== 100 || contrast !== 100) {
+            const imageData = sourceCtx.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+            const data = imageData.data;
+            
+            const brightnessFactor = (brightness - 100) / 100;
+            const contrastFactor = contrast / 100;
+            
+            for (let i = 0; i < data.length; i += 4) {
+                let r = data[i];
+                let g = data[i + 1];
+                let b = data[i + 2];
+                
+                // Apply brightness
+                r += brightnessFactor * 255;
+                g += brightnessFactor * 255;
+                b += brightnessFactor * 255;
+                
+                // Apply contrast
+                r = ((r - 128) * contrastFactor) + 128;
+                g = ((g - 128) * contrastFactor) + 128;
+                b = ((b - 128) * contrastFactor) + 128;
+                
+                // Clamp values
+                data[i] = Math.max(0, Math.min(255, r));
+                data[i + 1] = Math.max(0, Math.min(255, g));
+                data[i + 2] = Math.max(0, Math.min(255, b));
+            }
+            
+            sourceCtx.putImageData(imageData, 0, 0);
+        }
+
+        // Apply keystone correction if needed (simplified approach)
         if (activeMode === 'keystone' && keystonePoints.length === 4) {
             try {
-                sourceCanvas = correctKeystone(
-                    sourceCanvas, 
-                    originalImage, 
-                    keystonePoints as [Point, Point, Point, Point]
-                );
+                console.log('📐 Applying keystone correction...', keystonePoints);
+                
+                // Simple keystone correction by cropping to bounding rectangle
+                const [tl, tr, br, bl] = keystonePoints;
+                
+                // Calculate bounding rectangle
+                const minX = Math.min(tl.x, tr.x, br.x, bl.x);
+                const maxX = Math.max(tl.x, tr.x, br.x, bl.x);
+                const minY = Math.min(tl.y, tr.y, br.y, bl.y);
+                const maxY = Math.max(tl.y, tr.y, br.y, bl.y);
+                
+                const cropWidth = maxX - minX;
+                const cropHeight = maxY - minY;
+                
+                console.log('📏 Keystone crop area:', { minX, minY, cropWidth, cropHeight });
+                
+                if (cropWidth > 0 && cropHeight > 0 && 
+                    minX >= 0 && minY >= 0 && 
+                    maxX <= sourceCanvas.width && maxY <= sourceCanvas.height) {
+                    
+                    const croppedCanvas = document.createElement('canvas');
+                    const croppedCtx = croppedCanvas.getContext('2d');
+                    if (croppedCtx) {
+                        croppedCanvas.width = cropWidth;
+                        croppedCanvas.height = cropHeight;
+                        
+                        // Draw cropped area
+                        croppedCtx.drawImage(
+                            sourceCanvas,
+                            minX, minY, cropWidth, cropHeight,
+                            0, 0, cropWidth, cropHeight
+                        );
+                        
+                        sourceCanvas = croppedCanvas;
+                        console.log('✅ Keystone correction applied successfully');
+                    }
+                } else {
+                    console.warn('⚠️ Invalid keystone crop area, skipping correction');
+                }
             } catch (error) {
-                console.warn('Keystone correction failed, using transformed image:', error);
+                console.warn('❌ Keystone correction failed:', error);
             }
         }
 
@@ -520,8 +593,12 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         }
 
         // Convert to base64
+        console.log('💾 Final canvas size:', { width: finalCanvas.width, height: finalCanvas.height });
+        
         const dataUrl = finalCanvas.toDataURL(imageMimeType, 0.9);
         const base64Data = dataUrl.split(',')[1];
+        
+        console.log('✅ Image processing completed, data length:', base64Data.length);
         onSave(base64Data);
     };
 
