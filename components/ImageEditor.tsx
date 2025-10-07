@@ -23,6 +23,7 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
     const [selectedCorner, setSelectedCorner] = useState<number>(-1);
     const [cropDragMode, setCropDragMode] = useState<'none' | 'move' | 'resize'>('none');
     const [resizeHandle, setResizeHandle] = useState<number>(-1);
+    const [debugInfo, setDebugInfo] = useState<string>('');
 
     // Auto-detect business card area using the same algorithm as auto-process
     const autoDetectCardArea = useCallback(async (img: HTMLImageElement) => {
@@ -334,16 +335,13 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         const canvas = canvasRef.current;
         const rect = canvas.getBoundingClientRect();
         
-        // Calculate scale factors
-        const scaleX = canvas.width / rect.width;
-        const scaleY = canvas.height / rect.height;
-        
         // Get position from mouse or touch event
         let clientX: number, clientY: number;
         
         if ('touches' in e) {
             // Touch event
             const touch = e.touches[0] || e.changedTouches[0];
+            if (!touch) return { x: 0, y: 0 };
             clientX = touch.clientX;
             clientY = touch.clientY;
         } else {
@@ -352,9 +350,30 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
             clientY = e.clientY;
         }
         
-        // Get position relative to canvas and scale to actual canvas coordinates
-        const x = (clientX - rect.left) * scaleX;
-        const y = (clientY - rect.top) * scaleY;
+        // Get position relative to canvas display size
+        const relativeX = clientX - rect.left;
+        const relativeY = clientY - rect.top;
+        
+        // Scale to actual canvas coordinates
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        
+        const x = relativeX * scaleX;
+        const y = relativeY * scaleY;
+        
+        // Debug logging for touch events
+        if ('touches' in e) {
+            const debugMsg = `Touch: (${Math.round(x)}, ${Math.round(y)}) Scale: ${scaleX.toFixed(2)}x${scaleY.toFixed(2)}`;
+            setDebugInfo(debugMsg);
+            console.log('👆 Touch coordinates:', {
+                client: { x: clientX, y: clientY },
+                rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+                canvas: { width: canvas.width, height: canvas.height },
+                scale: { x: scaleX, y: scaleY },
+                relative: { x: relativeX, y: relativeY },
+                final: { x, y }
+            });
+        }
         
         return { x, y };
     };
@@ -376,12 +395,26 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
                 { x: cropArea.x, y: cropArea.y + cropArea.height }
             ];
             
+            console.log('✂️ Crop touch test:', {
+                touchPoint: { x, y },
+                cropArea,
+                corners,
+                handleSize
+            });
+            
+            const distances = corners.map((corner, index) => {
+                const distance = Math.sqrt((corner.x - x) ** 2 + (corner.y - y) ** 2);
+                console.log(`📍 Corner ${index} (${corner.x}, ${corner.y}) distance: ${distance}`);
+                return distance;
+            });
+            
             const clickedHandle = corners.findIndex(corner => {
                 const distance = Math.sqrt((corner.x - x) ** 2 + (corner.y - y) ** 2);
                 return distance < handleSize;
             });
             
             if (clickedHandle !== -1) {
+                console.log('✅ Crop corner selected:', clickedHandle);
                 setCropDragMode('resize');
                 setResizeHandle(clickedHandle);
                 setIsDragging(true);
@@ -394,24 +427,47 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
             const centerY = cropArea.y + cropArea.height / 2;
             const centerDistance = Math.sqrt((centerX - x) ** 2 + (centerY - y) ** 2);
             
+            console.log('🎯 Center distance:', centerDistance, 'Center:', { x: centerX, y: centerY });
+            
             if (centerDistance < 25) {
+                console.log('✅ Crop center selected');
                 setCropDragMode('move');
                 setIsDragging(true);
                 setDragStart({ x, y });
                 return;
             }
+            
+            console.log('❌ No crop handle hit, min distance:', Math.min(...distances));
         } else if (activeMode === 'keystone') {
             // Check if clicking on a keystone point - larger hit area for mobile
             const hitRadius = 35; // Match the outer radius
+            
+            console.log('🎯 Keystone touch test:', {
+                touchPoint: { x, y },
+                keystonePoints,
+                hitRadius
+            });
+            
+            const distances = keystonePoints.map((point, index) => {
+                const distance = Math.sqrt((point.x - x) ** 2 + (point.y - y) ** 2);
+                console.log(`📍 Point ${index} (${point.x}, ${point.y}) distance: ${distance}`);
+                return distance;
+            });
+            
             const clickedPoint = keystonePoints.findIndex(point => {
                 const distance = Math.sqrt((point.x - x) ** 2 + (point.y - y) ** 2);
                 return distance < hitRadius;
             });
             
+            console.log('🎯 Clicked point:', clickedPoint, 'Min distance:', Math.min(...distances));
+            
             if (clickedPoint !== -1) {
+                console.log('✅ Keystone point selected:', clickedPoint);
                 setSelectedCorner(clickedPoint);
                 setIsDragging(true);
                 setDragStart({ x, y });
+            } else {
+                console.log('❌ No keystone point hit');
             }
         }
     };
@@ -834,7 +890,12 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
             </div>
 
             {/* Canvas */}
-            <div className="mb-4 flex justify-center bg-gray-100 dark:bg-gray-700 rounded-lg p-4 overflow-auto">
+            <div className="mb-4 flex flex-col items-center bg-gray-100 dark:bg-gray-700 rounded-lg p-4 overflow-auto">
+                {debugInfo && (
+                    <div className="mb-2 px-3 py-1 bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 text-xs rounded">
+                        🐛 Debug: {debugInfo}
+                    </div>
+                )}
                 <canvas
                     ref={canvasRef}
                     // Mouse events
