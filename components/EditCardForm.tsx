@@ -24,7 +24,9 @@ const EditCardForm: React.FC<EditCardFormProps> = ({ initialData, onCancel }) =>
     useEffect(() => {
         // Set a default category if none is set and categories are loaded
         if (!cardData.category && categories.length > 0) {
-            setCardData(prev => ({ ...prev, category: categories[0] }));
+            // Set default to "Machine" if available, otherwise use first category
+            const defaultCategory = categories.includes('Machine') ? 'Machine' : categories[0];
+            setCardData(prev => ({ ...prev, category: defaultCategory }));
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [categories]);
@@ -57,7 +59,7 @@ const EditCardForm: React.FC<EditCardFormProps> = ({ initialData, onCancel }) =>
                 cardId: cardData.id 
             });
             
-            await saveCard(cardData, handleUploadProgress);
+            await saveCard(cardData);
             setSaveSuccess(true);
             
             setTimeout(() => {

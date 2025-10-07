@@ -12,6 +12,7 @@ export interface BusinessCard {
   category: string;
   createdAt: number;
   createdBy?: string; // Username of the user who created this card
+  sharedWith?: string[]; // Array of usernames who can see this card
   // New image fields
   imageUrl?: string;
   imageFileName?: string;

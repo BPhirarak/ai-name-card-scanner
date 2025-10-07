@@ -150,6 +150,54 @@ export const listenForCategories = (callback: (categories: string[]) => void) =>
   return () => off(categoriesRef);
 };
 
+export const listenForUsers = (callback: (users: string[]) => void) => {
+  console.log('👂 Setting up users listener...');
+  const cardsRef = ref(database, 'cards');
+  
+  onValue(cardsRef, (snapshot) => {
+    const data = snapshot.val();
+    if (data) {
+      const users = Array.from(new Set(
+        Object.values(data)
+          .map((card: any) => card.createdBy)
+          .filter(Boolean)
+      )) as string[];
+      callback(users.sort());
+    } else {
+      callback([]);
+    }
+  });
+  
+  return () => {
+    console.log('🔇 Removing users listener');
+    off(cardsRef);
+  };
+};
+
+export const shareCards = async (cardIds: string[], targetUsers: string[]): Promise<void> => {
+  try {
+    console.log('🔗 Sharing cards:', { cardIds, targetUsers });
+    
+    for (const cardId of cardIds) {
+      const cardRef = ref(database, `cards/${cardId}`);
+      const snapshot = await get(cardRef);
+      const cardData = snapshot.val() as BusinessCard;
+      
+      if (cardData) {
+        const currentSharedWith = cardData.sharedWith || [];
+        const updatedSharedWith = Array.from(new Set([...currentSharedWith, ...targetUsers]));
+        
+        await set(ref(database, `cards/${cardId}/sharedWith`), updatedSharedWith);
+      }
+    }
+    
+    console.log('✅ Cards shared successfully');
+  } catch (error) {
+    console.error("❌ Failed to share cards:", error);
+    throw error;
+  }
+};
+
 // Export the test function
 export { testFirebaseStorage };
 

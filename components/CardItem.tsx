@@ -83,9 +83,11 @@ interface CardItemProps {
     card: BusinessCard;
     onEdit: (card: BusinessCard) => void;
     onDelete: (id: string) => void;
+    isShareMode?: boolean;
+    canEdit?: boolean;
 }
 
-const CardItem: React.FC<CardItemProps> = ({ card, onEdit, onDelete }) => {
+const CardItem: React.FC<CardItemProps> = ({ card, onEdit, onDelete, isShareMode = false, canEdit = true }) => {
     const [imageError, setImageError] = useState(false);
     const [imageLoading, setImageLoading] = useState(true);
     const [displayImageUrl, setDisplayImageUrl] = useState<string | null>(null);
@@ -219,22 +221,24 @@ const CardItem: React.FC<CardItemProps> = ({ card, onEdit, onDelete }) => {
                             <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100 truncate">
                                 {displayName}
                             </h3>
-                            <div className="flex gap-2 ml-2">
-                                <button
-                                    onClick={handleEditClick}
-                                    className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-sm font-medium px-2 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
-                                    title="Edit card"
-                                >
-                                    ✏️ Edit
-                                </button>
-                                <button
-                                    onClick={handleDeleteClick}
-                                    className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 text-sm font-medium px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                                    title="Delete card"
-                                >
-                                    🗑️ Delete
-                                </button>
-                            </div>
+                            {!isShareMode && canEdit && (
+                                <div className="flex gap-2 ml-2">
+                                    <button
+                                        onClick={handleEditClick}
+                                        className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-sm font-medium px-2 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                                        title="Edit card"
+                                    >
+                                        ✏️ Edit
+                                    </button>
+                                    <button
+                                        onClick={handleDeleteClick}
+                                        className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 text-sm font-medium px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                                        title="Delete card"
+                                    >
+                                        🗑️ Delete
+                                    </button>
+                                </div>
+                            )}
                         </div>
 
                         <div className="space-y-1 text-sm text-slate-600 dark:text-slate-300">
@@ -277,6 +281,12 @@ const CardItem: React.FC<CardItemProps> = ({ card, onEdit, onDelete }) => {
                                     <span className="flex items-center gap-1 px-2 py-1 bg-blue-50 dark:bg-blue-900/20 rounded text-blue-600 dark:text-blue-400">
                                         <span>👤</span>
                                         {card.createdBy}
+                                    </span>
+                                )}
+                                {card.sharedWith && card.sharedWith.length > 0 && (
+                                    <span className="flex items-center gap-1 px-2 py-1 bg-green-50 dark:bg-green-900/20 rounded text-green-600 dark:text-green-400">
+                                        <span>🔗</span>
+                                        แชร์ให้ {card.sharedWith.length} คน
                                     </span>
                                 )}
                             </div>
