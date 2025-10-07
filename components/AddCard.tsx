@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { extractInfoFromImage } from '../services/geminiService';
+import { detectBusinessCard, autoProcessCard } from '../utils/cardDetection';
 import EditCardForm from './EditCardForm';
 import ImageEditor from './ImageEditor';
 import Spinner from './Spinner';
@@ -29,6 +30,7 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
     const [error, setError] = useState<string | null>(null);
     const [isCameraOn, setIsCameraOn] = useState(false);
     const [showImageEditor, setShowImageEditor] = useState(false);
+    const [isAutoProcessing, setIsAutoProcessing] = useState(false);
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -50,6 +52,7 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
         setIsLoading(false);
         setError(null);
         setShowImageEditor(false);
+        setIsAutoProcessing(false);
         if(fileInputRef.current) {
             fileInputRef.current.value = "";
         }
@@ -124,13 +127,69 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
         setShowImageEditor(false);
     };
 
-    const handleProcess = async () => {
+    const handleAutoProcess = async () => {
         if (!image) return;
+        
+        setIsAutoProcessing(true);
+        setError(null);
+        
+        try {
+            // Create canvas from image
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            if (!ctx) throw new Error('Canvas not supported');
+            
+            const img = new Image();
+            await new Promise((resolve, reject) => {
+                img.onload = resolve;
+                img.onerror = reject;
+                img.src = `data:${image.mimeType};base64,${image.data}`;
+            });
+            
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0);
+            
+            // Detect business card
+            const detectedCard = await detectBusinessCard(canvas);
+            
+            if (detectedCard) {
+                console.log('Card detected with confidence:', detectedCard.confidence);
+                
+                // Auto-process the card
+                const processedCanvas = autoProcessCard(canvas, detectedCard);
+                
+                // Convert back to base64
+                const dataUrl = processedCanvas.toDataURL(image.mimeType, 0.9);
+                const base64Data = dataUrl.split(',')[1];
+                
+                // Update image with processed version
+                setImage({
+                    ...image,
+                    data: base64Data,
+                    url: dataUrl
+                });
+                
+                // Automatically proceed to AI extraction
+                await handleProcessWithData(base64Data);
+            } else {
+                throw new Error('ไม่สามารถตรวจจับนามบัตรได้ กรุณาลองแก้ไขด้วยตนเอง');
+            }
+        } catch (err) {
+            console.error('Auto-processing failed:', err);
+            setError((err as Error).message);
+        } finally {
+            setIsAutoProcessing(false);
+        }
+    };
+
+    const handleProcessWithData = async (imageData: string) => {
         setIsLoading(true);
         setError(null);
         setExtractedData(null);
+        
         try {
-            const data = await extractInfoFromImage(image.data, image.mimeType);
+            const data = await extractInfoFromImage(imageData, image!.mimeType);
             const cardData = { 
                 ...data, 
                 category: '', 
@@ -139,8 +198,8 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
             };
             
             // Add image data for storage
-            (cardData as any).originalImageData = image.data;
-            (cardData as any).originalImageMimeType = image.mimeType;
+            (cardData as any).originalImageData = imageData;
+            (cardData as any).originalImageMimeType = image!.mimeType;
             
             setExtractedData(cardData);
         } catch (err) {
@@ -148,6 +207,11 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
         } finally {
             setIsLoading(false);
         }
+    };
+
+    const handleProcess = async () => {
+        if (!image) return;
+        await handleProcessWithData(image.data);
     };
 
     if (extractedData) {
@@ -215,11 +279,22 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
 
                 {image && !isCameraOn && (
                     <>
+                        <button 
+                            onClick={handleAutoProcess} 
+                            disabled={isAutoProcessing || isLoading} 
+                            className="w-full sm:w-auto bg-purple-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-purple-700 transition-all shadow-lg disabled:bg-slate-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        >
+                            {isAutoProcessing ? (
+                                <><Spinner /> กำลังตรวจจับและปรับแต่ง...</>
+                            ) : (
+                                '🤖 ตรวจจับและปรับแต่งอัตโนมัติ'
+                            )}
+                        </button>
                         <button onClick={handleEditImage} className="w-full sm:w-auto bg-blue-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-blue-700 transition-all shadow-lg flex items-center justify-center gap-2">
-                            🎨 แก้ไขรูปภาพ
+                            🎨 แก้ไขด้วยตนเอง
                         </button>
                         <button onClick={handleProcess} disabled={isLoading} className="w-full sm:w-auto bg-green-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-green-700 transition-all shadow-lg disabled:bg-slate-400 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                            {isLoading ? <><Spinner /> กำลังประมวลผล...</> : 'ประมวลผลนามบัตร'}
+                            {isLoading ? <><Spinner /> กำลังประมวลผล...</> : 'ประมวลผลตามต้นฉบับ'}
                         </button>
                         <button onClick={resetState} className="w-full sm:w-auto bg-slate-500 text-white font-bold py-3 px-6 rounded-lg hover:bg-slate-600 transition-all">รีเซ็ต</button>
                     </>
@@ -231,11 +306,19 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
                 <h4 className="font-semibold text-blue-800 dark:text-blue-200 mb-2">📋 วิธีใช้งาน:</h4>
                 <ul className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
                     <li>📷 อัพโหลดหรือถ่ายภาพนามบัตร</li>
-                    <li>🎨 แก้ไขรูปภาพ: ตัด, หมุน, ปรับแสง, แก้มุมเอียง</li>
-                    <li>🤖 AI จะดึงข้อมูลติดต่อออกมาอัตโนมัติ</li>
+                    <li>🤖 <strong>แนะนำ:</strong> ใช้ "ตรวจจับและปรับแต่งอัตโนมัติ" สำหรับ mobile</li>
+                    <li>🎨 หรือแก้ไขด้วยตนเอง: ตัด, หมุน, ปรับแสง, แก้มุมเอียง</li>
+                    <li>🧠 AI จะดึงข้อมูลติดต่อออกมาอัตโนมัติ</li>
                     <li>✏️ ตรวจสอบและแก้ไขข้อมูลก่อนบันทึก</li>
                     <li>💾 รูปภาพจะถูกเก็บใน Firebase Database</li>
                 </ul>
+                
+                <div className="mt-3 p-3 bg-purple-50 dark:bg-purple-900/20 rounded border border-purple-200 dark:border-purple-800">
+                    <h5 className="font-semibold text-purple-800 dark:text-purple-200 mb-1">🚀 ฟีเจอร์ใหม่: Auto Detection</h5>
+                    <p className="text-xs text-purple-700 dark:text-purple-300">
+                        ระบบจะตรวจจับนามบัตรอัตโนมัติ ตัดขอบ ปรับมุม และเพิ่มความคมชัดให้เหมาะสมสำหรับการอ่านข้อมูล
+                    </p>
+                </div>
             </div>
         </div>
     );
