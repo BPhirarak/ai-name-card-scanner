@@ -23,7 +23,6 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
     const [selectedCorner, setSelectedCorner] = useState<number>(-1);
     const [cropDragMode, setCropDragMode] = useState<'none' | 'move' | 'resize'>('none');
     const [resizeHandle, setResizeHandle] = useState<number>(-1);
-    const [debugInfo, setDebugInfo] = useState<string>('');
 
     // Auto-detect business card area using the same algorithm as auto-process
     const autoDetectCardArea = useCallback(async (img: HTMLImageElement) => {
@@ -81,12 +80,8 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         img.onload = async () => {
             setOriginalImage(img);
             
-            console.log('🎨 ImageEditor loading image:', { width: img.width, height: img.height });
-            
             // Initialize keystone points with auto-detected card corners
             const detection = await autoDetectCardArea(img);
-            
-            console.log('🎨 ImageEditor detection result:', detection);
             
             // Ensure we always have good-sized corners for mobile
             const enhancedCorners = detection.corners.map(corner => ({
@@ -96,8 +91,6 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
             
             setKeystonePoints(enhancedCorners);
             setCropArea(detection.cropArea);
-            
-            console.log('🎨 ImageEditor initialized with enhanced corners:', enhancedCorners);
         };
         img.src = `data:${imageMimeType};base64,${imageData}`;
     }, [imageData, imageMimeType, autoDetectCardArea]);
@@ -318,13 +311,7 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
             const innerRadius = 20 * scaleFactor; // Larger visible area
             const isSelected = selectedCorner === index;
             
-            console.log(`🎯 Drawing keystone point ${index}:`, {
-                point,
-                outerRadius,
-                innerRadius,
-                scaleFactor,
-                canvasSize
-            });
+            // Debug logging removed for cleaner production experience
             
             // Draw outer circle (touch area indicator)
             ctx.fillStyle = isSelected ? 'rgba(255, 0, 0, 0.4)' : 'rgba(0, 255, 0, 0.4)';
@@ -386,19 +373,7 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         const x = relativeX * scaleX;
         const y = relativeY * scaleY;
         
-        // Debug logging for touch events
-        if ('touches' in e) {
-            const debugMsg = `Touch: (${Math.round(x)}, ${Math.round(y)}) Scale: ${scaleX.toFixed(2)}x${scaleY.toFixed(2)}`;
-            setDebugInfo(debugMsg);
-            console.log('👆 Touch coordinates:', {
-                client: { x: clientX, y: clientY },
-                rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
-                canvas: { width: canvas.width, height: canvas.height },
-                scale: { x: scaleX, y: scaleY },
-                relative: { x: relativeX, y: relativeY },
-                final: { x, y }
-            });
-        }
+        // Clean production experience - debug logging removed
         
         return { x, y };
     };
@@ -424,27 +399,12 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
                 { x: cropArea.x, y: cropArea.y + cropArea.height }
             ];
             
-            console.log('✂️ Crop touch test:', {
-                touchPoint: { x, y },
-                cropArea,
-                corners,
-                handleSize,
-                scaleFactor
-            });
-            
-            const distances = corners.map((corner, index) => {
-                const distance = Math.sqrt((corner.x - x) ** 2 + (corner.y - y) ** 2);
-                console.log(`📍 Corner ${index} (${corner.x}, ${corner.y}) distance: ${distance} (handleSize: ${handleSize})`);
-                return distance;
-            });
-            
             const clickedHandle = corners.findIndex(corner => {
                 const distance = Math.sqrt((corner.x - x) ** 2 + (corner.y - y) ** 2);
                 return distance < handleSize;
             });
             
             if (clickedHandle !== -1) {
-                console.log('✅ Crop corner selected:', clickedHandle);
                 setCropDragMode('resize');
                 setResizeHandle(clickedHandle);
                 setIsDragging(true);
@@ -457,51 +417,27 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
             const centerY = cropArea.y + cropArea.height / 2;
             const centerDistance = Math.sqrt((centerX - x) ** 2 + (centerY - y) ** 2);
             
-            console.log('🎯 Center distance:', centerDistance, 'Center:', { x: centerX, y: centerY }, 'centerSize:', centerSize);
-            
             if (centerDistance < centerSize) {
-                console.log('✅ Crop center selected');
                 setCropDragMode('move');
                 setIsDragging(true);
                 setDragStart({ x, y });
                 return;
             }
-            
-            console.log('❌ No crop handle hit, min distance:', Math.min(...distances));
         } else if (activeMode === 'keystone') {
             // Calculate hit radius based on canvas size
             const canvasSize = Math.min(canvasRef.current.width, canvasRef.current.height);
             const scaleFactor = Math.max(1, canvasSize / 500);
             const hitRadius = 35 * scaleFactor; // Scale hit radius with canvas
             
-            console.log('🎯 Keystone touch test:', {
-                touchPoint: { x, y },
-                keystonePoints,
-                hitRadius,
-                scaleFactor,
-                canvasSize
-            });
-            
-            const distances = keystonePoints.map((point, index) => {
-                const distance = Math.sqrt((point.x - x) ** 2 + (point.y - y) ** 2);
-                console.log(`📍 Point ${index} (${point.x}, ${point.y}) distance: ${distance} (hitRadius: ${hitRadius})`);
-                return distance;
-            });
-            
             const clickedPoint = keystonePoints.findIndex(point => {
                 const distance = Math.sqrt((point.x - x) ** 2 + (point.y - y) ** 2);
                 return distance < hitRadius;
             });
             
-            console.log('🎯 Clicked point:', clickedPoint, 'Min distance:', Math.min(...distances));
-            
             if (clickedPoint !== -1) {
-                console.log('✅ Keystone point selected:', clickedPoint);
                 setSelectedCorner(clickedPoint);
                 setIsDragging(true);
                 setDragStart({ x, y });
-            } else {
-                console.log('❌ No keystone point hit');
             }
         }
     };
@@ -581,14 +517,7 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
     const handleSave = () => {
         if (!originalImage) return;
 
-        console.log('🎨 Starting image save process...', {
-            mode: activeMode,
-            brightness,
-            contrast,
-            rotation,
-            keystonePoints: keystonePoints.length,
-            cropArea
-        });
+        // Starting image save process
 
         // Create a new canvas for final processing
         const finalCanvas = document.createElement('canvas');
@@ -652,7 +581,7 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         // Apply keystone correction if needed (proper perspective correction)
         if (activeMode === 'keystone' && keystonePoints.length === 4) {
             try {
-                console.log('📐 Applying keystone correction...', keystonePoints);
+                // Applying keystone correction
                 
                 const [tl, tr, br, bl] = keystonePoints;
                 
@@ -674,7 +603,7 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
                 outputCanvas.width = Math.round(width);
                 outputCanvas.height = Math.round(height);
                 
-                console.log('📏 Keystone output size:', { width: outputCanvas.width, height: outputCanvas.height });
+                // Keystone output calculated
                 
                 // Simple perspective mapping using bilinear interpolation
                 const imageData = outputCtx.createImageData(outputCanvas.width, outputCanvas.height);
@@ -739,7 +668,7 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
                 outputCtx.putImageData(imageData, 0, 0);
                 sourceCanvas = outputCanvas;
                 
-                console.log('✅ Perspective correction applied successfully');
+                // Perspective correction applied successfully
             } catch (error) {
                 console.warn('❌ Keystone correction failed:', error);
                 // Fall back to simple crop
@@ -786,12 +715,9 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         }
 
         // Convert to base64
-        console.log('💾 Final canvas size:', { width: finalCanvas.width, height: finalCanvas.height });
-        
+        // Convert to base64
         const dataUrl = finalCanvas.toDataURL(imageMimeType, 0.9);
         const base64Data = dataUrl.split(',')[1];
-        
-        console.log('✅ Image processing completed, data length:', base64Data.length);
         onSave(base64Data);
     };
 
@@ -997,12 +923,7 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
             </div>
 
             {/* Canvas */}
-            <div className="mb-4 flex flex-col items-center bg-gray-100 dark:bg-gray-700 rounded-lg p-4 overflow-auto">
-                {debugInfo && (
-                    <div className="mb-2 px-3 py-1 bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 text-xs rounded">
-                        🐛 Debug: {debugInfo}
-                    </div>
-                )}
+            <div className="mb-4 flex justify-center bg-gray-100 dark:bg-gray-700 rounded-lg p-4 overflow-auto">
                 <canvas
                     ref={canvasRef}
                     // Mouse events
