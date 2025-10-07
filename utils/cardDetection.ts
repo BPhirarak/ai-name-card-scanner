@@ -272,24 +272,31 @@ function scoreContour(contour: Point[], imageWidth: number, imageHeight: number)
 }
 
 function detectCardFallback(imageWidth: number, imageHeight: number): DetectedCard {
-    // Fallback: assume card is in center with standard proportions
-    const cardWidth = Math.min(imageWidth * 0.8, imageHeight * 0.8 * 1.6);
+    // Improved fallback: better coverage to avoid cutting off card parts
+    const cardWidth = Math.min(imageWidth * 0.9, imageHeight * 0.9 * 1.6);
     const cardHeight = cardWidth / 1.6;
     
-    const x = (imageWidth - cardWidth) / 2;
-    const y = (imageHeight - cardHeight) / 2;
+    // Ensure minimum coverage
+    const minWidth = imageWidth * 0.7;
+    const minHeight = imageHeight * 0.5;
+    
+    const finalWidth = Math.max(cardWidth, minWidth);
+    const finalHeight = Math.max(cardHeight, minHeight);
+    
+    const x = (imageWidth - finalWidth) / 2;
+    const y = (imageHeight - finalHeight) / 2;
     
     const corners: [Point, Point, Point, Point] = [
         { x, y },                           // TL
-        { x: x + cardWidth, y },           // TR
-        { x: x + cardWidth, y: y + cardHeight }, // BR
-        { x, y: y + cardHeight }           // BL
+        { x: x + finalWidth, y },           // TR
+        { x: x + finalWidth, y: y + finalHeight }, // BR
+        { x, y: y + finalHeight }           // BL
     ];
     
     return {
         corners,
         confidence: 0.5,
-        cropArea: { x, y, width: cardWidth, height: cardHeight }
+        cropArea: { x, y, width: finalWidth, height: finalHeight }
     };
 }
 

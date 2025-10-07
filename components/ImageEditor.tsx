@@ -51,10 +51,10 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
             console.warn('Detection failed, using fallback:', error);
         }
         
-        // Fallback to simple center-based detection
-        const margin = Math.min(img.width, img.height) * 0.1;
-        const cardWidth = img.width * 0.8;
-        const cardHeight = img.height * 0.6;
+        // Improved fallback detection with better proportions
+        const margin = Math.min(img.width, img.height) * 0.05; // Smaller margin
+        const cardWidth = img.width * 0.9; // Larger width coverage
+        const cardHeight = img.height * 0.75; // Larger height coverage to avoid cutting bottom
         const x = (img.width - cardWidth) / 2;
         const y = (img.height - cardHeight) / 2;
         
@@ -81,13 +81,23 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         img.onload = async () => {
             setOriginalImage(img);
             
+            console.log('🎨 ImageEditor loading image:', { width: img.width, height: img.height });
+            
             // Initialize keystone points with auto-detected card corners
             const detection = await autoDetectCardArea(img);
             
-            setKeystonePoints(detection.corners);
+            console.log('🎨 ImageEditor detection result:', detection);
+            
+            // Ensure we always have good-sized corners for mobile
+            const enhancedCorners = detection.corners.map(corner => ({
+                x: Math.max(10, Math.min(img.width - 10, corner.x)),
+                y: Math.max(10, Math.min(img.height - 10, corner.y))
+            })) as [Point, Point, Point, Point];
+            
+            setKeystonePoints(enhancedCorners);
             setCropArea(detection.cropArea);
             
-            console.log('🎨 ImageEditor initialized with detection:', detection);
+            console.log('🎨 ImageEditor initialized with enhanced corners:', enhancedCorners);
         };
         img.src = `data:${imageMimeType};base64,${imageData}`;
     }, [imageData, imageMimeType, autoDetectCardArea]);
@@ -615,15 +625,101 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
             sourceCtx.putImageData(imageData, 0, 0);
         }
 
-        // Apply keystone correction if needed (simplified approach)
+        // Apply keystone correction if needed (proper perspective correction)
         if (activeMode === 'keystone' && keystonePoints.length === 4) {
             try {
                 console.log('📐 Applying keystone correction...', keystonePoints);
                 
-                // Simple keystone correction by cropping to bounding rectangle
                 const [tl, tr, br, bl] = keystonePoints;
                 
-                // Calculate bounding rectangle
+                // Create output canvas with standard business card proportions
+                const outputCanvas = document.createElement('canvas');
+                const outputCtx = outputCanvas.getContext('2d');
+                if (!outputCtx) throw new Error('Cannot create output canvas');
+                
+                // Calculate output dimensions based on keystone area
+                const width = Math.max(
+                    Math.sqrt((tr.x - tl.x) ** 2 + (tr.y - tl.y) ** 2),
+                    Math.sqrt((br.x - bl.x) ** 2 + (br.y - bl.y) ** 2)
+                );
+                const height = Math.max(
+                    Math.sqrt((bl.x - tl.x) ** 2 + (bl.y - tl.y) ** 2),
+                    Math.sqrt((br.x - tr.x) ** 2 + (br.y - tr.y) ** 2)
+                );
+                
+                outputCanvas.width = Math.round(width);
+                outputCanvas.height = Math.round(height);
+                
+                console.log('📏 Keystone output size:', { width: outputCanvas.width, height: outputCanvas.height });
+                
+                // Simple perspective mapping using bilinear interpolation
+                const imageData = outputCtx.createImageData(outputCanvas.width, outputCanvas.height);
+                const data = imageData.data;
+                
+                // Get source image data
+                const sourceImageData = sourceCtx.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+                const sourceData = sourceImageData.data;
+                
+                // Map each pixel in output to source using bilinear interpolation
+                for (let y = 0; y < outputCanvas.height; y++) {
+                    for (let x = 0; x < outputCanvas.width; x++) {
+                        // Normalize coordinates (0-1)
+                        const u = x / (outputCanvas.width - 1);
+                        const v = y / (outputCanvas.height - 1);
+                        
+                        // Bilinear interpolation of keystone points
+                        const top = {
+                            x: tl.x + u * (tr.x - tl.x),
+                            y: tl.y + u * (tr.y - tl.y)
+                        };
+                        const bottom = {
+                            x: bl.x + u * (br.x - bl.x),
+                            y: bl.y + u * (br.y - bl.y)
+                        };
+                        
+                        const sourceX = top.x + v * (bottom.x - top.x);
+                        const sourceY = top.y + v * (bottom.y - top.y);
+                        
+                        // Sample source pixel with bilinear interpolation
+                        if (sourceX >= 0 && sourceX < sourceCanvas.width - 1 && 
+                            sourceY >= 0 && sourceY < sourceCanvas.height - 1) {
+                            
+                            const x1 = Math.floor(sourceX);
+                            const y1 = Math.floor(sourceY);
+                            const x2 = x1 + 1;
+                            const y2 = y1 + 1;
+                            
+                            const fx = sourceX - x1;
+                            const fy = sourceY - y1;
+                            
+                            const outputIdx = (y * outputCanvas.width + x) * 4;
+                            
+                            for (let c = 0; c < 4; c++) {
+                                const p1 = sourceData[(y1 * sourceCanvas.width + x1) * 4 + c];
+                                const p2 = sourceData[(y1 * sourceCanvas.width + x2) * 4 + c];
+                                const p3 = sourceData[(y2 * sourceCanvas.width + x1) * 4 + c];
+                                const p4 = sourceData[(y2 * sourceCanvas.width + x2) * 4 + c];
+                                
+                                const interpolated = 
+                                    p1 * (1 - fx) * (1 - fy) +
+                                    p2 * fx * (1 - fy) +
+                                    p3 * (1 - fx) * fy +
+                                    p4 * fx * fy;
+                                
+                                data[outputIdx + c] = Math.round(interpolated);
+                            }
+                        }
+                    }
+                }
+                
+                outputCtx.putImageData(imageData, 0, 0);
+                sourceCanvas = outputCanvas;
+                
+                console.log('✅ Perspective correction applied successfully');
+            } catch (error) {
+                console.warn('❌ Keystone correction failed:', error);
+                // Fall back to simple crop
+                const [tl, tr, br, bl] = keystonePoints;
                 const minX = Math.min(tl.x, tr.x, br.x, bl.x);
                 const maxX = Math.max(tl.x, tr.x, br.x, bl.x);
                 const minY = Math.min(tl.y, tr.y, br.y, bl.y);
@@ -632,33 +728,20 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
                 const cropWidth = maxX - minX;
                 const cropHeight = maxY - minY;
                 
-                console.log('📏 Keystone crop area:', { minX, minY, cropWidth, cropHeight });
-                
-                if (cropWidth > 0 && cropHeight > 0 && 
-                    minX >= 0 && minY >= 0 && 
-                    maxX <= sourceCanvas.width && maxY <= sourceCanvas.height) {
-                    
+                if (cropWidth > 0 && cropHeight > 0) {
                     const croppedCanvas = document.createElement('canvas');
                     const croppedCtx = croppedCanvas.getContext('2d');
                     if (croppedCtx) {
                         croppedCanvas.width = cropWidth;
                         croppedCanvas.height = cropHeight;
-                        
-                        // Draw cropped area
                         croppedCtx.drawImage(
                             sourceCanvas,
                             minX, minY, cropWidth, cropHeight,
                             0, 0, cropWidth, cropHeight
                         );
-                        
                         sourceCanvas = croppedCanvas;
-                        console.log('✅ Keystone correction applied successfully');
                     }
-                } else {
-                    console.warn('⚠️ Invalid keystone crop area, skipping correction');
                 }
-            } catch (error) {
-                console.warn('❌ Keystone correction failed:', error);
             }
         }
 
