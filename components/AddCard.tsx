@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { extractInfoFromImage } from '../services/geminiService';
 import EditCardForm from './EditCardForm';
+import ImageEditor from './ImageEditor';
 import Spinner from './Spinner';
 import type { BusinessCard } from '../types';
 
@@ -27,6 +28,7 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [isCameraOn, setIsCameraOn] = useState(false);
+    const [showImageEditor, setShowImageEditor] = useState(false);
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -47,6 +49,7 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
         setExtractedData(null);
         setIsLoading(false);
         setError(null);
+        setShowImageEditor(false);
         if(fileInputRef.current) {
             fileInputRef.current.value = "";
         }
@@ -106,6 +109,21 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
         }
     };
 
+    const handleEditImage = () => {
+        if (!image) return;
+        setShowImageEditor(true);
+    };
+
+    const handleImageEditorSave = (editedImageData: string) => {
+        if (!image) return;
+        setImage({
+            ...image,
+            data: editedImageData,
+            url: `data:${image.mimeType};base64,${editedImageData}`
+        });
+        setShowImageEditor(false);
+    };
+
     const handleProcess = async () => {
         if (!image) return;
         setIsLoading(true);
@@ -134,6 +152,17 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
 
     if (extractedData) {
         return <EditCardForm initialData={extractedData} onCancel={resetState} />;
+    }
+
+    if (showImageEditor && image) {
+        return (
+            <ImageEditor
+                imageData={image.data}
+                imageMimeType={image.mimeType}
+                onSave={handleImageEditorSave}
+                onCancel={() => setShowImageEditor(false)}
+            />
+        );
     }
 
     return (
@@ -186,6 +215,9 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
 
                 {image && !isCameraOn && (
                     <>
+                        <button onClick={handleEditImage} className="w-full sm:w-auto bg-blue-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-blue-700 transition-all shadow-lg flex items-center justify-center gap-2">
+                            🎨 แก้ไขรูปภาพ
+                        </button>
                         <button onClick={handleProcess} disabled={isLoading} className="w-full sm:w-auto bg-green-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-green-700 transition-all shadow-lg disabled:bg-slate-400 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                             {isLoading ? <><Spinner /> กำลังประมวลผล...</> : 'ประมวลผลนามบัตร'}
                         </button>
@@ -199,6 +231,7 @@ const AddCard: React.FC<AddCardProps> = ({ currentUser }) => {
                 <h4 className="font-semibold text-blue-800 dark:text-blue-200 mb-2">📋 วิธีใช้งาน:</h4>
                 <ul className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
                     <li>📷 อัพโหลดหรือถ่ายภาพนามบัตร</li>
+                    <li>🎨 แก้ไขรูปภาพ: ตัด, หมุน, ปรับแสง, แก้มุมเอียง</li>
                     <li>🤖 AI จะดึงข้อมูลติดต่อออกมาอัตโนมัติ</li>
                     <li>✏️ ตรวจสอบและแก้ไขข้อมูลก่อนบันทึก</li>
                     <li>💾 รูปภาพจะถูกเก็บใน Firebase Database</li>
