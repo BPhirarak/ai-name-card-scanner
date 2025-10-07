@@ -20,65 +20,80 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
     const [keystonePoints, setKeystonePoints] = useState<Point[]>([]);
     const [activeMode, setActiveMode] = useState<'crop' | 'keystone' | 'adjust'>('adjust');
     const [selectedCorner, setSelectedCorner] = useState<number>(-1);
+    const [cropDragMode, setCropDragMode] = useState<'none' | 'move' | 'resize'>('none');
+    const [resizeHandle, setResizeHandle] = useState<number>(-1);
+
+    // Auto-detect business card area (simplified algorithm)
+    const autoDetectCardArea = useCallback((img: HTMLImageElement) => {
+        const margin = Math.min(img.width, img.height) * 0.1;
+        const cardWidth = img.width * 0.8;
+        const cardHeight = img.height * 0.6;
+        const x = (img.width - cardWidth) / 2;
+        const y = (img.height - cardHeight) / 2;
+        
+        return {
+            x: Math.max(margin, x),
+            y: Math.max(margin, y),
+            width: Math.min(cardWidth, img.width - 2 * margin),
+            height: Math.min(cardHeight, img.height - 2 * margin)
+        };
+    }, []);
 
     // Load original image
     useEffect(() => {
         const img = new Image();
         img.onload = () => {
             setOriginalImage(img);
-            // Initialize keystone points as rectangle corners
+            
+            // Initialize keystone points with auto-detected card corners
+            const cardArea = autoDetectCardArea(img);
             const points = [
-                { x: 0, y: 0 }, // top-left
-                { x: img.width, y: 0 }, // top-right
-                { x: img.width, y: img.height }, // bottom-right
-                { x: 0, y: img.height } // bottom-left
+                { x: cardArea.x, y: cardArea.y }, // top-left
+                { x: cardArea.x + cardArea.width, y: cardArea.y }, // top-right
+                { x: cardArea.x + cardArea.width, y: cardArea.y + cardArea.height }, // bottom-right
+                { x: cardArea.x, y: cardArea.y + cardArea.height } // bottom-left
             ];
             setKeystonePoints(points);
+            
+            // Initialize crop area
+            setCropArea(cardArea);
         };
         img.src = `data:${imageMimeType};base64,${imageData}`;
-    }, [imageData, imageMimeType]);
+    }, [imageData, imageMimeType, autoDetectCardArea]);
 
     // Apply brightness and contrast manually for better mobile compatibility
     const applyImageFilters = (ctx: CanvasRenderingContext2D, img: HTMLImageElement) => {
-        // Try CSS filter first (modern browsers)
-        try {
-            ctx.filter = `brightness(${brightness}%) contrast(${contrast}%)`;
-            ctx.drawImage(img, 0, 0);
-            
-            // Test if filter worked by checking if it's still set
-            if (ctx.filter !== 'none' && ctx.filter.includes('brightness')) {
-                return; // Filter worked, we're done
-            }
-        } catch (e) {
-            // Filter not supported, fall back to manual method
-        }
-        
-        // Manual brightness/contrast adjustment for older browsers
-        ctx.filter = 'none'; // Reset filter
+        // Always use manual method for consistent results across all devices
+        ctx.filter = 'none'; // Reset any existing filter
         ctx.drawImage(img, 0, 0);
         
+        // Apply manual brightness/contrast if needed
         if (brightness !== 100 || contrast !== 100) {
             const imageData = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height);
             const data = imageData.data;
             
-            const brightnessFactor = brightness / 100;
+            const brightnessFactor = (brightness - 100) / 100; // Convert to -1 to 1 range
             const contrastFactor = contrast / 100;
             
             for (let i = 0; i < data.length; i += 4) {
-                // Apply brightness
-                data[i] *= brightnessFactor;     // Red
-                data[i + 1] *= brightnessFactor; // Green
-                data[i + 2] *= brightnessFactor; // Blue
+                let r = data[i];
+                let g = data[i + 1];
+                let b = data[i + 2];
                 
-                // Apply contrast
-                data[i] = ((data[i] - 128) * contrastFactor) + 128;
-                data[i + 1] = ((data[i + 1] - 128) * contrastFactor) + 128;
-                data[i + 2] = ((data[i + 2] - 128) * contrastFactor) + 128;
+                // Apply brightness (additive)
+                r += brightnessFactor * 255;
+                g += brightnessFactor * 255;
+                b += brightnessFactor * 255;
                 
-                // Clamp values
-                data[i] = Math.max(0, Math.min(255, data[i]));
-                data[i + 1] = Math.max(0, Math.min(255, data[i + 1]));
-                data[i + 2] = Math.max(0, Math.min(255, data[i + 2]));
+                // Apply contrast (multiplicative around midpoint)
+                r = ((r - 128) * contrastFactor) + 128;
+                g = ((g - 128) * contrastFactor) + 128;
+                b = ((b - 128) * contrastFactor) + 128;
+                
+                // Clamp values to 0-255 range
+                data[i] = Math.max(0, Math.min(255, r));
+                data[i + 1] = Math.max(0, Math.min(255, g));
+                data[i + 2] = Math.max(0, Math.min(255, b));
             }
             
             ctx.putImageData(imageData, 0, 0);
@@ -179,38 +194,70 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         ctx.globalCompositeOperation = 'source-over';
         
         // Draw crop border
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([5, 5]);
+        ctx.strokeStyle = '#00ff00';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([10, 5]);
         ctx.strokeRect(area.x, area.y, area.width, area.height);
         ctx.setLineDash([]);
         
-        // Draw corner handles
-        const handleSize = 12;
-        ctx.fillStyle = '#ffffff';
-        ctx.strokeStyle = '#000000';
-        ctx.lineWidth = 1;
+        // Draw large corner handles for mobile
+        const handleSize = 30; // Much larger for mobile
+        ctx.fillStyle = '#00ff00';
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
         
         const corners = [
-            { x: area.x, y: area.y },
-            { x: area.x + area.width, y: area.y },
-            { x: area.x + area.width, y: area.y + area.height },
-            { x: area.x, y: area.y + area.height }
+            { x: area.x, y: area.y, label: '↖' },
+            { x: area.x + area.width, y: area.y, label: '↗' },
+            { x: area.x + area.width, y: area.y + area.height, label: '↘' },
+            { x: area.x, y: area.y + area.height, label: '↙' }
         ];
         
-        corners.forEach(corner => {
-            ctx.fillRect(corner.x - handleSize/2, corner.y - handleSize/2, handleSize, handleSize);
-            ctx.strokeRect(corner.x - handleSize/2, corner.y - handleSize/2, handleSize, handleSize);
+        corners.forEach((corner, index) => {
+            // Draw touch area (larger invisible area)
+            ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+            ctx.beginPath();
+            ctx.arc(corner.x, corner.y, handleSize, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            // Draw visible handle
+            ctx.fillStyle = '#00ff00';
+            ctx.beginPath();
+            ctx.arc(corner.x, corner.y, handleSize * 0.6, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.stroke();
+            
+            // Draw corner icon
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 20px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(corner.label, corner.x, corner.y + 7);
         });
         
         // Draw crop dimensions
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '14px Arial';
+        ctx.fillStyle = '#00ff00';
+        ctx.font = 'bold 16px Arial';
+        ctx.textAlign = 'left';
         ctx.fillText(
-            `${Math.round(area.width)} × ${Math.round(area.height)}`,
+            `📏 ${Math.round(area.width)} × ${Math.round(area.height)}`,
             area.x + 5,
-            area.y - 5
+            area.y - 10
         );
+        
+        // Draw center move handle
+        const centerX = area.x + area.width / 2;
+        const centerY = area.y + area.height / 2;
+        ctx.fillStyle = 'rgba(255, 255, 0, 0.7)';
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, 25, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+        
+        ctx.fillStyle = '#000000';
+        ctx.font = 'bold 16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('✋', centerX, centerY + 5);
         
         // Restore state
         ctx.restore();
@@ -218,32 +265,36 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
 
     const drawKeystonePoints = (ctx: CanvasRenderingContext2D, points: Point[]) => {
         points.forEach((point, index) => {
-            // Larger circles for mobile
-            const radius = 20;
+            // Much larger circles for mobile
+            const outerRadius = 35; // Larger touch area
+            const innerRadius = 20; // Larger visible area
             const isSelected = selectedCorner === index;
             
             // Draw outer circle (touch area indicator)
-            ctx.fillStyle = isSelected ? 'rgba(255, 0, 0, 0.3)' : 'rgba(0, 255, 0, 0.3)';
+            ctx.fillStyle = isSelected ? 'rgba(255, 0, 0, 0.4)' : 'rgba(0, 255, 0, 0.4)';
             ctx.beginPath();
-            ctx.arc(point.x, point.y, radius, 0, 2 * Math.PI);
+            ctx.arc(point.x, point.y, outerRadius, 0, 2 * Math.PI);
             ctx.fill();
             
             // Draw inner circle (visual point)
             ctx.fillStyle = isSelected ? '#ff0000' : '#00ff00';
             ctx.beginPath();
-            ctx.arc(point.x, point.y, 12, 0, 2 * Math.PI);
+            ctx.arc(point.x, point.y, innerRadius, 0, 2 * Math.PI);
             ctx.fill();
             
             // Draw white border
             ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 3;
             ctx.stroke();
             
-            // Draw point label
+            // Draw point label with corner names
+            const cornerNames = ['TL', 'TR', 'BR', 'BL'];
             ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 16px Arial';
+            ctx.font = 'bold 14px Arial';
             ctx.textAlign = 'center';
-            ctx.fillText(`${index + 1}`, point.x, point.y + 5);
+            ctx.fillText(cornerNames[index], point.x, point.y - 2);
+            ctx.font = 'bold 12px Arial';
+            ctx.fillText(`${index + 1}`, point.x, point.y + 12);
         });
     };
 
@@ -285,13 +336,43 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
 
         const { x, y } = getCanvasCoordinates(e);
 
-        if (activeMode === 'crop') {
-            setIsDragging(true);
-            setDragStart({ x, y });
-            setCropArea({ x, y, width: 0, height: 0 });
+        if (activeMode === 'crop' && cropArea) {
+            // Check if touching corner handles first
+            const handleSize = 30;
+            const corners = [
+                { x: cropArea.x, y: cropArea.y },
+                { x: cropArea.x + cropArea.width, y: cropArea.y },
+                { x: cropArea.x + cropArea.width, y: cropArea.y + cropArea.height },
+                { x: cropArea.x, y: cropArea.y + cropArea.height }
+            ];
+            
+            const clickedHandle = corners.findIndex(corner => {
+                const distance = Math.sqrt((corner.x - x) ** 2 + (corner.y - y) ** 2);
+                return distance < handleSize;
+            });
+            
+            if (clickedHandle !== -1) {
+                setCropDragMode('resize');
+                setResizeHandle(clickedHandle);
+                setIsDragging(true);
+                setDragStart({ x, y });
+                return;
+            }
+            
+            // Check if touching center (move handle)
+            const centerX = cropArea.x + cropArea.width / 2;
+            const centerY = cropArea.y + cropArea.height / 2;
+            const centerDistance = Math.sqrt((centerX - x) ** 2 + (centerY - y) ** 2);
+            
+            if (centerDistance < 25) {
+                setCropDragMode('move');
+                setIsDragging(true);
+                setDragStart({ x, y });
+                return;
+            }
         } else if (activeMode === 'keystone') {
             // Check if clicking on a keystone point - larger hit area for mobile
-            const hitRadius = 40; // Much larger for touch
+            const hitRadius = 35; // Match the outer radius
             const clickedPoint = keystonePoints.findIndex(point => {
                 const distance = Math.sqrt((point.x - x) ** 2 + (point.y - y) ** 2);
                 return distance < hitRadius;
@@ -300,29 +381,72 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
             if (clickedPoint !== -1) {
                 setSelectedCorner(clickedPoint);
                 setIsDragging(true);
+                setDragStart({ x, y });
             }
         }
     };
 
     const handleMove = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-        if (!isDragging || !canvasRef.current) return;
+        if (!isDragging || !canvasRef.current || !cropArea) return;
         
         e.preventDefault(); // Prevent scrolling on touch
 
         const { x, y } = getCanvasCoordinates(e);
+        const deltaX = x - dragStart.x;
+        const deltaY = y - dragStart.y;
 
-        if (activeMode === 'crop' && cropArea) {
-            const width = x - dragStart.x;
-            const height = y - dragStart.y;
-            setCropArea({
-                x: width < 0 ? x : dragStart.x,
-                y: height < 0 ? y : dragStart.y,
-                width: Math.abs(width),
-                height: Math.abs(height)
-            });
+        if (activeMode === 'crop') {
+            if (cropDragMode === 'move') {
+                // Move entire crop area
+                const newX = Math.max(0, Math.min(originalImage!.width - cropArea.width, cropArea.x + deltaX));
+                const newY = Math.max(0, Math.min(originalImage!.height - cropArea.height, cropArea.y + deltaY));
+                
+                setCropArea({
+                    ...cropArea,
+                    x: newX,
+                    y: newY
+                });
+                setDragStart({ x, y });
+            } else if (cropDragMode === 'resize' && resizeHandle !== -1) {
+                // Resize crop area by dragging corners
+                const newCropArea = { ...cropArea };
+                
+                switch (resizeHandle) {
+                    case 0: // Top-left
+                        newCropArea.width = Math.max(50, cropArea.width - deltaX);
+                        newCropArea.height = Math.max(50, cropArea.height - deltaY);
+                        newCropArea.x = cropArea.x + deltaX;
+                        newCropArea.y = cropArea.y + deltaY;
+                        break;
+                    case 1: // Top-right
+                        newCropArea.width = Math.max(50, cropArea.width + deltaX);
+                        newCropArea.height = Math.max(50, cropArea.height - deltaY);
+                        newCropArea.y = cropArea.y + deltaY;
+                        break;
+                    case 2: // Bottom-right
+                        newCropArea.width = Math.max(50, cropArea.width + deltaX);
+                        newCropArea.height = Math.max(50, cropArea.height + deltaY);
+                        break;
+                    case 3: // Bottom-left
+                        newCropArea.width = Math.max(50, cropArea.width - deltaX);
+                        newCropArea.height = Math.max(50, cropArea.height + deltaY);
+                        newCropArea.x = cropArea.x + deltaX;
+                        break;
+                }
+                
+                // Ensure crop area stays within image bounds
+                newCropArea.x = Math.max(0, Math.min(originalImage!.width - newCropArea.width, newCropArea.x));
+                newCropArea.y = Math.max(0, Math.min(originalImage!.height - newCropArea.height, newCropArea.y));
+                
+                setCropArea(newCropArea);
+                setDragStart({ x, y });
+            }
         } else if (activeMode === 'keystone' && selectedCorner !== -1) {
             const newPoints = [...keystonePoints];
-            newPoints[selectedCorner] = { x, y };
+            // Constrain points to image bounds
+            const constrainedX = Math.max(0, Math.min(originalImage!.width, x));
+            const constrainedY = Math.max(0, Math.min(originalImage!.height, y));
+            newPoints[selectedCorner] = { x: constrainedX, y: constrainedY };
             setKeystonePoints(newPoints);
         }
     };
@@ -330,6 +454,8 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
     const handleEnd = () => {
         setIsDragging(false);
         setSelectedCorner(-1);
+        setCropDragMode('none');
+        setResizeHandle(-1);
     };
 
     const handleSave = () => {
@@ -526,23 +652,36 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
                 
                 {activeMode === 'crop' && (
                     <div className="md:col-span-3">
-                        <div className="flex flex-col gap-2">
+                        <div className="flex flex-col gap-3">
                             <p className="text-sm text-gray-600 dark:text-gray-400">
-                                📱 สัมผัสและลากเพื่อเลือกพื้นที่ที่ต้องการตัด (Mobile) / 🖱️ คลิกและลากเพื่อเลือกพื้นที่ (Desktop)
+                                📱 <strong>Mobile:</strong> สัมผัสมุมสีเขียวเพื่อปรับขนาด, สัมผัสกลางเพื่อย้าย<br/>
+                                🖱️ <strong>Desktop:</strong> คลิกลากมุมเพื่อปรับขนาด, คลิกกลางเพื่อย้าย
                             </p>
-                            {cropArea && cropArea.width > 0 && cropArea.height > 0 && (
-                                <div className="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 p-2 rounded">
-                                    📏 พื้นที่ที่เลือก: {Math.round(cropArea.width)} × {Math.round(cropArea.height)} pixels
-                                    <br />
-                                    📍 ตำแหน่ง: ({Math.round(cropArea.x)}, {Math.round(cropArea.y)})
+                            {cropArea && (
+                                <div className="text-xs text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 p-3 rounded">
+                                    📏 ขนาด: {Math.round(cropArea.width)} × {Math.round(cropArea.height)} pixels<br/>
+                                    📍 ตำแหน่ง: ({Math.round(cropArea.x)}, {Math.round(cropArea.y)})<br/>
+                                    💡 <strong>วิธีใช้:</strong> ลากมุม ↖↗↘↙ เพื่อปรับขนาด, ลาก ✋ เพื่อย้าย
                                 </div>
                             )}
-                            <button
-                                onClick={() => setCropArea(null)}
-                                className="self-start px-3 py-1 bg-red-500 text-white text-sm rounded hover:bg-red-600 transition-colors"
-                            >
-                                🗑️ ล้างการเลือก
-                            </button>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => {
+                                        if (originalImage) {
+                                            setCropArea(autoDetectCardArea(originalImage));
+                                        }
+                                    }}
+                                    className="px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 transition-colors"
+                                >
+                                    🔍 ตรวจจับอัตโนมัติ
+                                </button>
+                                <button
+                                    onClick={() => setCropArea(null)}
+                                    className="px-3 py-1 bg-red-500 text-white text-sm rounded hover:bg-red-600 transition-colors"
+                                >
+                                    🗑️ ล้างการเลือก
+                                </button>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -550,9 +689,16 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
                 {activeMode === 'keystone' && (
                     <div className="md:col-span-3">
                         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-                            <p className="text-sm text-gray-600 dark:text-gray-400">
-                                🎯 สัมผัสและลากจุดสีเขียวขนาดใหญ่เพื่อปรับมุมของนามบัตร (Mobile) / 🖱️ คลิกและลากจุดสีเขียวเพื่อปรับมุม (Desktop)
-                            </p>
+                            <div className="flex flex-col gap-2">
+                                <p className="text-sm text-gray-600 dark:text-gray-400">
+                                    🎯 <strong>Mobile:</strong> สัมผัสและลากจุดสีเขียวขนาดใหญ่ (TL, TR, BR, BL) เพื่อปรับมุมนามบัตร<br/>
+                                    🖱️ <strong>Desktop:</strong> คลิกและลากจุดสีเขียวเพื่อปรับมุม
+                                </p>
+                                <div className="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 p-2 rounded">
+                                    💡 <strong>คำแนะนำ:</strong> จุดควบคุมมีขนาดใหญ่พิเศษสำหรับ mobile<br/>
+                                    📍 TL=บนซ้าย, TR=บนขวา, BR=ล่างขวา, BL=ล่างซ้าย
+                                </div>
+                            </div>
                             <div className="flex gap-2">
                                 <button
                                     onClick={() => {
