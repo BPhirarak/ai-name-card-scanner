@@ -241,11 +241,13 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         ctx.strokeRect(area.x, area.y, area.width, area.height);
         ctx.setLineDash([]);
         
-        // Draw large corner handles for mobile
-        const handleSize = 30; // Much larger for mobile
+        // Calculate handle size based on canvas size
+        const canvasSize = Math.min(ctx.canvas.width, ctx.canvas.height);
+        const scaleFactor = Math.max(1, canvasSize / 500);
+        const handleSize = 30 * scaleFactor; // Scale for canvas size
         ctx.fillStyle = '#00ff00';
         ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 2 * scaleFactor;
         
         const corners = [
             { x: area.x, y: area.y, label: '↖' },
@@ -288,28 +290,41 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         // Draw center move handle
         const centerX = area.x + area.width / 2;
         const centerY = area.y + area.height / 2;
+        const centerRadius = 25 * scaleFactor;
         ctx.fillStyle = 'rgba(255, 255, 0, 0.7)';
         ctx.beginPath();
-        ctx.arc(centerX, centerY, 25, 0, 2 * Math.PI);
+        ctx.arc(centerX, centerY, centerRadius, 0, 2 * Math.PI);
         ctx.fill();
         ctx.strokeStyle = '#ffffff';
         ctx.stroke();
         
         ctx.fillStyle = '#000000';
-        ctx.font = 'bold 16px Arial';
+        ctx.font = `bold ${Math.max(16, 16 * scaleFactor)}px Arial`;
         ctx.textAlign = 'center';
-        ctx.fillText('✋', centerX, centerY + 5);
+        ctx.fillText('✋', centerX, centerY + 5 * scaleFactor);
         
         // Restore state
         ctx.restore();
     };
 
     const drawKeystonePoints = (ctx: CanvasRenderingContext2D, points: Point[]) => {
+        // Calculate scale factor based on canvas size for responsive sizing
+        const canvasSize = Math.min(ctx.canvas.width, ctx.canvas.height);
+        const scaleFactor = Math.max(1, canvasSize / 500); // Base size for 500px canvas
+        
         points.forEach((point, index) => {
-            // Much larger circles for mobile
-            const outerRadius = 35; // Larger touch area
-            const innerRadius = 20; // Larger visible area
+            // Scale circles based on canvas size
+            const outerRadius = 35 * scaleFactor; // Larger touch area
+            const innerRadius = 20 * scaleFactor; // Larger visible area
             const isSelected = selectedCorner === index;
+            
+            console.log(`🎯 Drawing keystone point ${index}:`, {
+                point,
+                outerRadius,
+                innerRadius,
+                scaleFactor,
+                canvasSize
+            });
             
             // Draw outer circle (touch area indicator)
             ctx.fillStyle = isSelected ? 'rgba(255, 0, 0, 0.4)' : 'rgba(0, 255, 0, 0.4)';
@@ -325,17 +340,17 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
             
             // Draw white border
             ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 3;
+            ctx.lineWidth = 3 * scaleFactor;
             ctx.stroke();
             
             // Draw point label with corner names
             const cornerNames = ['TL', 'TR', 'BR', 'BL'];
             ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 14px Arial';
+            ctx.font = `bold ${Math.max(14, 14 * scaleFactor)}px Arial`;
             ctx.textAlign = 'center';
-            ctx.fillText(cornerNames[index], point.x, point.y - 2);
-            ctx.font = 'bold 12px Arial';
-            ctx.fillText(`${index + 1}`, point.x, point.y + 12);
+            ctx.fillText(cornerNames[index], point.x, point.y - 2 * scaleFactor);
+            ctx.font = `bold ${Math.max(12, 12 * scaleFactor)}px Arial`;
+            ctx.fillText(`${index + 1}`, point.x, point.y + 12 * scaleFactor);
         });
     };
 
@@ -396,8 +411,12 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
         const { x, y } = getCanvasCoordinates(e);
 
         if (activeMode === 'crop' && cropArea) {
-            // Check if touching corner handles first
-            const handleSize = 30;
+            // Calculate handle size based on canvas size
+            const canvasSize = Math.min(canvasRef.current.width, canvasRef.current.height);
+            const scaleFactor = Math.max(1, canvasSize / 500);
+            const handleSize = 30 * scaleFactor;
+            const centerSize = 25 * scaleFactor;
+            
             const corners = [
                 { x: cropArea.x, y: cropArea.y },
                 { x: cropArea.x + cropArea.width, y: cropArea.y },
@@ -409,12 +428,13 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
                 touchPoint: { x, y },
                 cropArea,
                 corners,
-                handleSize
+                handleSize,
+                scaleFactor
             });
             
             const distances = corners.map((corner, index) => {
                 const distance = Math.sqrt((corner.x - x) ** 2 + (corner.y - y) ** 2);
-                console.log(`📍 Corner ${index} (${corner.x}, ${corner.y}) distance: ${distance}`);
+                console.log(`📍 Corner ${index} (${corner.x}, ${corner.y}) distance: ${distance} (handleSize: ${handleSize})`);
                 return distance;
             });
             
@@ -437,9 +457,9 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
             const centerY = cropArea.y + cropArea.height / 2;
             const centerDistance = Math.sqrt((centerX - x) ** 2 + (centerY - y) ** 2);
             
-            console.log('🎯 Center distance:', centerDistance, 'Center:', { x: centerX, y: centerY });
+            console.log('🎯 Center distance:', centerDistance, 'Center:', { x: centerX, y: centerY }, 'centerSize:', centerSize);
             
-            if (centerDistance < 25) {
+            if (centerDistance < centerSize) {
                 console.log('✅ Crop center selected');
                 setCropDragMode('move');
                 setIsDragging(true);
@@ -449,18 +469,22 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageData, imageMimeType, onS
             
             console.log('❌ No crop handle hit, min distance:', Math.min(...distances));
         } else if (activeMode === 'keystone') {
-            // Check if clicking on a keystone point - larger hit area for mobile
-            const hitRadius = 35; // Match the outer radius
+            // Calculate hit radius based on canvas size
+            const canvasSize = Math.min(canvasRef.current.width, canvasRef.current.height);
+            const scaleFactor = Math.max(1, canvasSize / 500);
+            const hitRadius = 35 * scaleFactor; // Scale hit radius with canvas
             
             console.log('🎯 Keystone touch test:', {
                 touchPoint: { x, y },
                 keystonePoints,
-                hitRadius
+                hitRadius,
+                scaleFactor,
+                canvasSize
             });
             
             const distances = keystonePoints.map((point, index) => {
                 const distance = Math.sqrt((point.x - x) ** 2 + (point.y - y) ** 2);
-                console.log(`📍 Point ${index} (${point.x}, ${point.y}) distance: ${distance}`);
+                console.log(`📍 Point ${index} (${point.x}, ${point.y}) distance: ${distance} (hitRadius: ${hitRadius})`);
                 return distance;
             });
             
